@@ -44,6 +44,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -92,6 +93,10 @@ public class SQLServerConnection implements ISQLServerConnection {
 
     private SqlFedAuthToken fedAuthToken = null;
 
+    public static final int PREPARED_STATEMENT_CLEANUP_THRESHOLD = 10; 
+    private ConcurrentLinkedQueue<PreparedStatementDiscardAction> discardedPreparedStatementHandles = new ConcurrentLinkedQueue<PreparedStatementDiscardAction>();
+    private AtomicInteger discardedPreparedStatementHandleQueueCount = new AtomicInteger(0);
+    
     SqlFedAuthToken getAuthenticationResult() {
         return fedAuthToken;
     }
@@ -2623,6 +2628,10 @@ public class SQLServerConnection implements ISQLServerConnection {
         if (null != tdsChannel) {
             tdsChannel.close();
         }
+
+        // Clean-up prepared statement queue etc.
+        this.cleanupPreparedStatementDiscardActions();
+
         loggerExternal.exiting(getClassNameLogging(), "close");
     }
 
@@ -3252,6 +3261,73 @@ public class SQLServerConnection implements ISQLServerConnection {
         tdsReader.reset(mark);
         tdsReader.readBytes(new byte[envValueLength], 0, envValueLength);
     }
+
+    final class PreparedStatementDiscardAction  {
+
+        public Integer handle; 
+        public Boolean directSql;
+
+        public PreparedStatementDiscardAction(Integer handle, Boolean directSql) {
+            this.handle = handle;
+            this.directSql = directSql;
+        }
+    }
+
+    final void enqueuePreparedStatementDiscardAction(Integer handle, Boolean directSql)
+    {
+        // Add the new handle to the discarding queue and find out current # enqueued.
+        this.discardedPreparedStatementHandles.add(new PreparedStatementDiscardAction(handle, directSql));
+        this.discardedPreparedStatementHandleQueueCount.incrementAndGet();
+    }
+
+    public int outstandingPreparedStatementDiscardActionCount(){
+        return this.discardedPreparedStatementHandleQueueCount.get();
+    }
+
+    private final void cleanupPreparedStatementDiscardActions()
+    {
+        this.discardedPreparedStatementHandles.clear();
+        this.discardedPreparedStatementHandleQueueCount.set(0);
+    }
+
+    final void handlePreparedStatementDiscardActions()
+    {
+        // Find out current # enqueued.
+        int count = this.discardedPreparedStatementHandleQueueCount.get();
+
+        // Met threshold to clean-up?
+        if(PREPARED_STATEMENT_CLEANUP_THRESHOLD < count){
+            // Create batch of sp_unprepare statements.
+            int handlesRemoved = 0;
+            StringBuilder sql = new StringBuilder(count * 32/*EXEC sp_cursorunprepare++;*/);
+            PreparedStatementDiscardAction prepStmtDiscardAction = null;
+
+            // Build the string containing no more than the # of handles to remove.
+            // Note that sp_unprepare can fail if the statement is already removed. 
+            // However, the server will only abort that statement continue with remaining clean-up.
+            while(null != (prepStmtDiscardAction = this.discardedPreparedStatementHandles.poll())){
+                ++handlesRemoved;
+                
+                sql.append(prepStmtDiscardAction.directSql ? "EXEC sp_unprepare " : "EXEC sp_cursorunprepare ")
+                    .append(prepStmtDiscardAction.handle.toString())
+                    .append(';');
+            }
+
+            try{
+                // Execute the batched set.
+                try(SQLServerStatement stmt = new SQLServerStatement(this, SQLServerResultSet.TYPE_SS_DIRECT_FORWARD_ONLY, SQLServerResultSet.CONCUR_READ_ONLY, SQLServerStatementColumnEncryptionSetting.UseConnectionSetting)){
+                    stmt.execute(sql.toString());
+                }
+            }
+            catch(SQLServerException e){
+                if (getConnectionLogger().isLoggable(java.util.logging.Level.FINER))
+                    getConnectionLogger().log(Level.FINER, this + ": Error (ignored) batch-closing prepared handles", e);
+            }
+            finally{}
+            // Decrement threshold counter
+            this.discardedPreparedStatementHandleQueueCount.addAndGet(-handlesRemoved);
+        }
+    } 
 
     final void processFedAuthInfo(TDSReader tdsReader,
             TDSTokenHandler tdsTokenHandler) throws SQLServerException {

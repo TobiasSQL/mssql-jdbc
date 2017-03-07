@@ -87,6 +87,10 @@ public class SQLServerPreparedStatement extends SQLServerStatement implements IS
     /** The prepared statement handle returned by the server */
     private int prepStmtHandle = 0;
 
+    public int statementHandleGet(){
+        return this.prepStmtHandle;
+    }
+
     /** Flag set to true when statement execution is expected to return the prepared statement handle */
     private boolean expectPrepStmtHandle = false;
 
@@ -144,9 +148,15 @@ public class SQLServerPreparedStatement extends SQLServerStatement implements IS
                 getStatementLogger().finer(this + ": Not closing PreparedHandle:" + prepStmtHandle + "; connection is already closed.");
         }
         else {
+
             if (getStatementLogger().isLoggable(java.util.logging.Level.FINER))
                 getStatementLogger().finer(this + ": Closing PreparedHandle:" + prepStmtHandle);
 
+            // Handle unprepare actions through batching @ connection level. 
+            this.connection.enqueuePreparedStatementDiscardAction(this.prepStmtHandle, this.executedSqlDirectly);
+            this.connection.handlePreparedStatementDiscardActions();
+
+            /* BEGIN Previous serial unprepare implementation
             final class PreparedHandleClose extends UninterruptableTDSCommand {
                 PreparedHandleClose() {
                     super("closePreparedHandle");
@@ -164,8 +174,7 @@ public class SQLServerPreparedStatement extends SQLServerStatement implements IS
                     return true;
                 }
             }
-
-            // Try to close the server cursor. Any failure is caught, logged, and ignored.
+            
             try {
                 executeCommand(new PreparedHandleClose());
             }
@@ -173,9 +182,11 @@ public class SQLServerPreparedStatement extends SQLServerStatement implements IS
                 if (getStatementLogger().isLoggable(java.util.logging.Level.FINER))
                     getStatementLogger().log(Level.FINER, this + ": Error (ignored) closing PreparedHandle:" + prepStmtHandle, e);
             }
-
             if (getStatementLogger().isLoggable(java.util.logging.Level.FINER))
                 getStatementLogger().finer(this + ": Closed PreparedHandle:" + prepStmtHandle);
+            
+            // END  Previous serial unprepare implementation
+            */
         }
     }
 
