@@ -3262,24 +3262,28 @@ public class SQLServerConnection implements ISQLServerConnection {
         tdsReader.readBytes(new byte[envValueLength], 0, envValueLength);
     }
 
-    final class PreparedStatementDiscardAction  {
+    private final class PreparedStatementDiscardAction  {
 
-        public Integer handle; 
-        public Boolean directSql;
+        public int handle; 
+        public boolean directSql;
 
-        public PreparedStatementDiscardAction(Integer handle, Boolean directSql) {
+        public PreparedStatementDiscardAction(int handle, boolean directSql) {
             this.handle = handle;
             this.directSql = directSql;
         }
     }
 
-    final void enqueuePreparedStatementDiscardAction(Integer handle, Boolean directSql)
+    final void enqueuePreparedStatementDiscardAction(int handle, boolean directSql)
     {
         // Add the new handle to the discarding queue and find out current # enqueued.
         this.discardedPreparedStatementHandles.add(new PreparedStatementDiscardAction(handle, directSql));
         this.discardedPreparedStatementHandleQueueCount.incrementAndGet();
     }
 
+
+    /**
+     * Returns the number of currently outstanding un-prepare actions.
+     */
     public int outstandingPreparedStatementDiscardActionCount(){
         return this.discardedPreparedStatementHandleQueueCount.get();
     }
@@ -3293,7 +3297,7 @@ public class SQLServerConnection implements ISQLServerConnection {
     final void handlePreparedStatementDiscardActions()
     {
         // Find out current # enqueued.
-        int count = this.discardedPreparedStatementHandleQueueCount.get();
+        int count = this.outstandingPreparedStatementDiscardActionCount();
 
         // Met threshold to clean-up?
         if(PREPARED_STATEMENT_CLEANUP_THRESHOLD < count){
@@ -3309,7 +3313,7 @@ public class SQLServerConnection implements ISQLServerConnection {
                 ++handlesRemoved;
                 
                 sql.append(prepStmtDiscardAction.directSql ? "EXEC sp_unprepare " : "EXEC sp_cursorunprepare ")
-                    .append(prepStmtDiscardAction.handle.toString())
+                    .append(prepStmtDiscardAction.handle)
                     .append(';');
             }
 

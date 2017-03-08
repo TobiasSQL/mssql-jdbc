@@ -10,7 +10,6 @@ package com.microsoft.sqlserver.jdbc.unit.statement;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 import java.sql.DriverManager;
-import java.sql.PreparedStatement;
 import java.sql.SQLException;
 
 import org.junit.jupiter.api.Test;
@@ -23,23 +22,23 @@ import com.microsoft.sqlserver.testframework.AbstractTest;
 
 @RunWith(JUnitPlatform.class)
 public class PreparedStatementTest extends AbstractTest {
-    //private static final String tableName = "[" + RandomUtil.getIdentifier("PreparedStatement") + "]";
-    
     /**
-     * Test ParameterMetaData#isWrapperFor and ParameterMetaData#unwrap.
+     * Test handling of unpreparing prepared statements.
      * 
      * @throws SQLException
      */
     @Test
     public void testBatchedUnprepare() throws SQLException {
+        SQLServerConnection conOuter = null;
         try (SQLServerConnection con = (SQLServerConnection)DriverManager.getConnection(connectionString)) {
+            conOuter = con;
             try {
                 String query = "/*unpreparetest*/SELECT * FROM sys.tables;";
 
                 int prevDiscardActionCount = 0;
 
                 // Exceed the threshold a few times.                
-                for(int i = 0; i <= 25; ++i){
+                for(int i = 0; i < 25; ++i){
 
                     // Verify current queue depth is expected.
                     assertSame(prevDiscardActionCount, con.outstandingPreparedStatementDiscardActionCount());
@@ -61,8 +60,9 @@ public class PreparedStatementTest extends AbstractTest {
             } 
             finally {
             }
-
         }
+        // Verify clean-up happened on connection close.
+        assertSame(0, conOuter.outstandingPreparedStatementDiscardActionCount());        
     }
 
 }
