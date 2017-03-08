@@ -51,6 +51,10 @@ public class SQLServerPreparedStatement extends SQLServerStatement implements IS
     private static final int BATCH_STATEMENT_DELIMITER_TDS_72 = 0xFF;
     final int nBatchStatementDelimiter = BATCH_STATEMENT_DELIMITER_TDS_72;
 
+
+    /** the number of times this statement has been executed */
+    private boolean bExecutedAtLeastOnce = false;
+
     /** the user's prepared sql syntax */
     private String sqlCommand;
 
@@ -577,6 +581,30 @@ public class SQLServerPreparedStatement extends SQLServerStatement implements IS
         tdsWriter.writeRPCStringUnicode(preparedSQL);
     }
 
+    private void buildExecSQLParams(TDSWriter tdsWriter) throws SQLServerException {
+        if (getStatementLogger().isLoggable(java.util.logging.Level.FINE))
+            getStatementLogger().fine(toString() + ": calling sp_executesql: SQL:" + preparedSQL);
+
+        expectPrepStmtHandle = false;
+        executedSqlDirectly = true;
+        expectCursorOutParams = false;
+        outParamIndexAdjustment = 2;
+
+        tdsWriter.writeShort((short) 0xFFFF); // procedure name length -> use ProcIDs
+        tdsWriter.writeShort(TDS.PROCID_SP_EXECUTESQL);
+        tdsWriter.writeByte((byte) 0);  // RPC procedure option 1
+        tdsWriter.writeByte((byte) 0);  // RPC procedure option 2
+
+        // NO, sp_executesql doesn't take this. tdsWriter.writeRPCInt(null, new Integer(prepStmtHandle), true);
+        prepStmtHandle = 0;
+
+        // <stmt> IN
+        tdsWriter.writeRPCStringUnicode(preparedSQL);
+
+        // <formal parameter defn> IN
+        tdsWriter.writeRPCStringUnicode((preparedTypeDefinitions.length() > 0) ? preparedTypeDefinitions : null);
+    }
+
     private void buildServerCursorExecParams(TDSWriter tdsWriter) throws SQLServerException {
         if (getStatementLogger().isLoggable(java.util.logging.Level.FINE))
             getStatementLogger().fine(toString() + ": calling sp_cursorexecute: PreparedHandle:" + prepStmtHandle + ", SQL:" + preparedSQL);
@@ -771,17 +799,26 @@ public class SQLServerPreparedStatement extends SQLServerStatement implements IS
     private boolean doPrepExec(TDSWriter tdsWriter,
             Parameter[] params,
             boolean hasNewTypeDefinitions) throws SQLServerException {
+       
         boolean needsPrepare = hasNewTypeDefinitions || 0 == prepStmtHandle;
 
-        if (needsPrepare) {
-            if (isCursorable(executeMethod))
+        // Cursors never go the non-prepared statement route.
+        if (isCursorable(executeMethod)){
+            if (needsPrepare) 
                 buildServerCursorPrepExecParams(tdsWriter);
             else
-                buildPrepExecParams(tdsWriter);
-        }
-        else {
-            if (isCursorable(executeMethod))
                 buildServerCursorExecParams(tdsWriter);
+        }
+        else{
+            // Move overhead of needing to do prepare & unprepare to only usages that need more than one execution.
+            // First execution, use sp_executesql, optimizing for asumption we will not re-use statement.
+            if (!this.bExecutedAtLeastOnce){
+                buildExecSQLParams(tdsWriter);
+                this.bExecutedAtLeastOnce = true;
+            }
+            // Second execution, use prepared statements since we seem to be re-using it.
+            else if(needsPrepare)
+                buildPrepExecParams(tdsWriter);
             else
                 buildExecParams(tdsWriter);
         }

@@ -3319,11 +3319,11 @@ public class SQLServerConnection implements ISQLServerConnection {
 
             try{
                 // Execute the batched set.
-                try(SQLServerStatement stmt = new SQLServerStatement(this, SQLServerResultSet.TYPE_SS_DIRECT_FORWARD_ONLY, SQLServerResultSet.CONCUR_READ_ONLY, SQLServerStatementColumnEncryptionSetting.UseConnectionSetting)){
+                try(Statement stmt = this.createStatement()){
                     stmt.execute(sql.toString());
                 }
             }
-            catch(SQLServerException e){
+            catch(SQLException e){
                 if (getConnectionLogger().isLoggable(java.util.logging.Level.FINER))
                     getConnectionLogger().log(Level.FINER, this + ": Error (ignored) batch-closing prepared handles", e);
             }
