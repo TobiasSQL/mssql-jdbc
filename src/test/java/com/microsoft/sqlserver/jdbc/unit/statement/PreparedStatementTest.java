@@ -104,7 +104,7 @@ public class PreparedStatementTest extends AbstractTest {
                 }  
 
                 // Verify total cache use.
-                assertSame(iterations * 2, executeSQLReturnFirstInt(con, verifyTotalCacheUsesQuery));
+                assertSame(iterations * 4, executeSQLReturnFirstInt(con, verifyTotalCacheUsesQuery));
               
             } 
             finally {
